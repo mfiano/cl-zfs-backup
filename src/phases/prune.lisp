@@ -1,0 +1,135 @@
+(in-package #:cl-zfs-backup.phases)
+
+(defclass pruning-state ()
+  ((%buckets
+    :reader buckets
+    :initarg :buckets)
+   (%remaining-buckets
+    :accessor remaining-buckets
+    :initarg :remaining-buckets)
+   (%keep-last
+    :accessor keep-last
+    :initarg :keep-last)))
+
+(defun get-pruning-bucket-count (data)
+  (loop :for bucket :in cfg:+pruning-buckets+
+        :sum (getf data bucket 0)))
+
+(defun make-pruning-state (options)
+  (make-instance 'pruning-state
+                 :buckets (u:plist->hash (u:plist-remove options :last))
+                 :remaining-buckets (get-pruning-bucket-count options)
+                 :keep-last (1+ (getf options :last 0))))
+
+(defun timestamp-same-week? (timestamp1 timestamp2)
+  (flet ((decode (timestamp)
+           (let* ((day-of-week (1+ (mod (1- (lt:timestamp-day-of-week timestamp)) 7)))
+                  (nearest-thursday (lt:timestamp+ timestamp (- 4 day-of-week) :day))
+                  (year (lt:timestamp-year nearest-thursday))
+                  (month (lt:timestamp-month nearest-thursday))
+                  (day (lt:timestamp-day nearest-thursday))
+                  (year-start (lt:encode-timestamp 0 0 0 0 1 1 year))
+                  (date (lt:encode-timestamp 0 0 0 0 day month year)))
+             (values year (1+ (floor (- (lt:day-of date) (lt:day-of year-start)) 7))))))
+    (u:mvlet ((year1 week1 (decode timestamp1))
+              (year2 week2 (decode timestamp2)))
+      (and (= year1 year2)
+           (= week1 week2)))))
+
+(defun get-changed-pruning-buckets (snapshot1 snapshot2)
+  (u:mvlet* ((buckets nil)
+             (timestamp1 (ds:timestamp snapshot1))
+             (timestamp2 (ds:timestamp snapshot2))
+             (ns1 s1 min1 h1 d1 m1 y1 dow1 (lt:decode-timestamp timestamp1))
+             (ns2 s2 min2 h2 d2 m2 y2 dow2 (lt:decode-timestamp timestamp2)))
+    (flet ((maybe-change-week ()
+             (unless (timestamp-same-week? timestamp1 timestamp2)
+               (push :weeks buckets))
+             (u:prependf buckets :minutes :hours :days)))
+      (cond
+        ((/= y1 y2)
+         (setf buckets (list :months :years))
+         (maybe-change-week))
+        ((/= m1 m2)
+         (setf buckets (list :months))
+         (maybe-change-week))
+        ((/= d1 d2)
+         (maybe-change-week))
+        ((/= h1 h2)
+         (setf buckets (list :minutes :hours)))
+        ((/= min1 min2)
+         (setf buckets (list :minutes)))))
+    buckets))
+
+(defun prune-keep-last? (state buckets)
+  (when (plusp (keep-last state))
+    (if (member :hours buckets)
+        (plusp (decf (keep-last state)))
+        t)))
+
+(defun prune-keep-buckets? (state buckets)
+  (let ((table (buckets state)))
+    (and (plusp (remaining-buckets state))
+         (dolist (type buckets)
+           (u:when-let ((bucket (u:href table type)))
+             (when (plusp bucket)
+               (decf (u:href table type))
+               (decf (remaining-buckets state))
+               (return t)))))))
+
+(defun prunable? (state buckets snapshots)
+  (and (null (prune-keep-last? state buckets))
+       (null (prune-keep-buckets? state buckets))
+       (or snapshots (zerop (remaining-buckets state)))))
+
+(defun collect-prunable (filesystem)
+  (loop :with state := (make-pruning-state (ep:policy (ds:endpoint filesystem)))
+        :for snapshot2 := nil :then snapshot1
+        :for (snapshot1 . rest) :on (ds:snapshot-order filesystem)
+        :for changed-buckets := cfg:+pruning-buckets+
+          :then (get-changed-pruning-buckets snapshot1 snapshot2)
+        :when (prunable? state changed-buckets rest)
+          :collect snapshot1))
+
+(defgeneric prune (object))
+
+(defmethod prune ((object ds:filesystem))
+  (let* ((filesystem-name (ds:name object))
+         (endpoint (ds:endpoint object))
+         (hostname (ep:hostname endpoint))
+         (freed 0)
+         (count 0))
+    (u:when-let ((prunable-snapshots (collect-prunable object)))
+      (dolist (snapshot prunable-snapshots)
+        (incf freed (ds:destroy snapshot))
+        (incf count))
+      (r:log (:info :prune :filesystem) (length prunable-snapshots) filesystem-name hostname))
+    (values freed count)))
+
+(defmethod prune ((object ep:endpoint))
+  (let ((freed 0)
+        (count 0))
+    (u:do-hash-values (filesystem (ds:datasets object))
+      (u:mvlet ((filesystem-freed snapshot-count (prune filesystem)))
+        (incf freed filesystem-freed)
+        (incf count snapshot-count)))
+    (values count freed)))
+
+(defmethod prune :around ((object ep:source))
+  (dolist (target (ep:targets object))
+    (prune target))
+  (u:mvlet ((count freed (call-next-method)))
+    (when (plusp count)
+      (r:log (:info :prune :source) count (format-bytes freed) (ep:hostname object)))))
+
+(defmethod prune :around ((object ep:target))
+  (u:mvlet ((count freed (call-next-method))
+            (source-name (ep:name (ep:source object))))
+    (when (plusp count)
+      (r:log (:info :prune :target) count (format-bytes freed) source-name (ep:hostname object)))))
+
+(defmethod prune ((object list))
+  (r:log (:info :prune :phase-begin))
+  (dolist (source object)
+    (prune source))
+  (r:log (:info :prune :phase-end)))

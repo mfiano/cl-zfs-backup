@@ -1,0 +1,152 @@
+;;;; Sample configuration file for cl-zfs-backup
+
+;;;; At startup, the application will look for this file in either
+;;;; $XDG_CONFIG_HOME/cl-zfs-backup/cl-zfs-backup.conf or $HOME/.cl-zfs-backup.conf
+
+;;; Policies
+
+;;; Policies instruct how old snapshots are pruned.
+;;; Each DEFINE-POLICY form is given a name to refer to in subsequent DEFINE-TARGET and
+;;; DEFINE-SOURCE declarations. The body consists of a single property list with the following
+;;; keyword symbols being recognized:
+
+;;; :LAST
+;;; Keep every snapshot for the past N hours.
+
+;;; :MINUTES
+;;; Keep 1 snapshot per minute for the last N minutes.
+
+;;; :HOURS
+;;; Keep 1 snapshot per hour for the last N hours.
+
+;;; :DAYS
+;;; Keep 1 snapshot per day for the last N days.
+
+;;; :WEEKS
+;;; Keep 1 snapshot per week for the last N weeks.
+
+;;; :MONTHS
+;;; Keep 1 snapshot per month for the last N months.
+
+;;; :YEARS
+;;; Keep 1 snapshot per year for the past N years.
+
+;;; The pruning algorithm does not care in which order the keys are specified, but they will be
+;;; applied in the order given in the descriptions above. Note that keys the hold onto snapshots
+;;; earlier in the sequence block later keys from pruning them. Thus, a policy of (:hours 2 :days 3)
+;;; will first mark the snapshots at the bottom of the past 2 hours as "to keep", and then ignoring
+;;; those, will mark the snapshots at the end of the past 3 days as "to keep". If the past 2 hours
+;;; ended up falling at the end and beginning of a new day, the second snapshot kept would be
+;;; considered kept by the :HOURS key, and the previous 3 days would be kept by the :DAYS key.
+
+;; Keep every single snapshot that is not older than 24 hours.
+(define-policy local ()
+  (:last 24))
+
+;; Keep 24 snapshots for the past day, and 7 snapshots for the past week.
+(define-policy server1-root ()
+  (:hours 24 :days 7))
+
+;; A more conservative policy for long-term storage.
+(define-policy server1-home ()
+  (:hours 24 :days 14 :weeks 8 :months 12 :years 5))
+
+;; The machine using this policy may be limited on space, and may be used as a short-term backup
+;; store, so only keep 3 snapshots for the past 3 days.
+(define-policy server2-root ()
+  (:days 3))
+
+;; Keep 7 snapshots for the past week, and 4 snapshots for the past 4 months.
+(define-policy server2-home ()
+  (:days 7 :months 4))
+
+;;; Targets
+
+;;; Targets define root filesystems that backups are pushed out to. They can be either local
+;;; filesystems, or remote machine filesystems.
+
+;; A remote filesystem, named 'server1'.
+(define-target server1 (:mode :ssh)
+  (;; The address or resolvable hostname of the remote machine.
+   :address "server1"
+   ;; the port SSH is listening on.
+   :port 22
+   ;; the user name to connect with.
+   :user "user"
+   ;; The ZFS filesystem that will house backups. Note that this is expanded to
+   ;; "backup/<source-hostname>/<source-base-path>" and any missing datasets are created
+   ;; automatically on the first seeding.
+   :base-path "backup"))
+
+;; A secondary remote filesystem for more short-term backup.
+(define-target server2 (:mode :ssh)
+  (:address "server2"
+   :port 22
+   :user "user"
+   :destructive t
+   :base-path "zroot/backup"))
+
+;;; Sources
+
+;;; Sources are filesystems on the local machine running cl-zfs-backup, that are pushed to one or
+;;; more target filesystems.
+
+(define-source root ()
+  (;; The ZFS filesystem to backup.
+   :base-path "zroot"
+   ;; Whether or not to include children filesystems under the base path.
+   :recursive t
+   ;; If :RECURSIVE is T, we can specify a list of filesystems relative to :BASE-PATH that should
+   ;; not be replicated. Here, we specify 'home/user' because it will be defined in another source
+   ;; below with different options. We also exclude some uninteresting filesystems we don't want
+   ;; backed up.
+   :exclude ("home/user" "var/cache" "var/log/journal")
+   ;; Only take snapshots if the change in size since the last snapshot exceeds this value. The
+   ;; second element in the value's list may be :B, :K, :M, :G, or :T, denoting the respective
+   ;; binary unit abbreviations. Here, we will take a snapshot only when a filesystem has 1M of
+   ;; changes since the last snapshot.
+   :minimum-size (1 :m)
+   ;; A policy name defined with DEFINE-POLICY above that is to be used for retention of the this
+   ;; source's local filesystems.
+   :policy local
+   ;; A list of target specifications of the form (TARGET-NAME :POLICY POLICY-NAME). TARGET-NAME
+   ;; refers to a target name defined with DEFINE-TARGET, and POLICY-NAME refers to a policy name
+   ;; defined with DEFINE-POLICY. This definition describes that this source's filesystems are to be
+   ;; replication to two different remote machines, and their snapshots should be pruned
+   ;; differently.
+   :targets ((server1 :policy server1-root)
+             (server2 :policy server2-root))))
+
+;; A source for the user's home directory that was excluded from the above source definition,
+;; because we would like a different minimum size and target pruning policies.
+(define-source home ()
+  (:base-path "zroot/home/user"
+   :recursive t
+   :minimum-size (1 :b)
+   :policy local
+   :targets ((server1 :policy server1-home)
+             (server2 :policy server2-home))))
+
+;;; process
+
+;;; The process has no name and describes the overall application process. Here we list both of our
+;;; sources to be periodically snapshotted, replicated and pruned according to the above
+;;; definitions. We specify an interval in minutes that the process should wait before its next
+;;; invocation. We also specify different logging levels for the terminal and log file outputs.
+
+(define-process ()
+  (;; A list of source names as defined with DEFINE-SOURCE that are to be managed.
+   :sources (root home)
+   ;; Repeat the process every 10 minutes. Note that if an iteration takes 1 minute to complete, the
+   ;; next iteration will be 9 minutes later (the process tracks how long each step takes in order
+   ;; to maintain a more consistent period).
+   :interval 10
+   ;; The log level (verbosity) to use for displaying messages to the terminal's output. Available
+   ;; levels are: :TRACE, :DEBUG, :INFO, :NOTICE, :WARN, and :ERROR. The specified level and all
+   ;; levels above it are emitted.
+   :terminal-log-level :info
+   ;; The log level to use for writing messages to the log file on disk. The log file is located at
+   ;; $XDG_DATA_HOME/cl-zfs-backup/cl-zfs-backup.log. Note that :TRACE is very noisy and will likely
+   ;; accumulate a lot of storage requirements over time. It is therefor best used only when a full
+   ;; log is needed when submitting bug reports.
+   :file-log-level :debug))
