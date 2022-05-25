@@ -1,0 +1,43 @@
+(in-package #:cl-zfs-backup.phases)
+
+(defun format-bytes (value)
+  (cond
+    ((< value #.(expt 2 10))
+     (format nil "~:dB" value))
+    ((< value #.(expt 2 20))
+     (format nil "~,1fK" (/ value #.(expt 2 10))))
+    ((< value #.(expt 2 30))
+     (format nil "~,1fM" (/ value #.(expt 2 20))))
+    ((< value #.(expt 2 40))
+     (format nil "~,1fG" (/ value #.(expt 2 30))))
+    (t
+     (format nil "~,1fT" (/ value #.(expt 2 40))))))
+
+(defgeneric take-snapshots (object))
+
+(defmethod take-snapshots ((object ep:source))
+  (let ((timestamp (lt:timestamp-to-unix (lt:now)))
+        (minimum-size (ep:minimum-size object)))
+    (u:do-hash (filesystem-name filesystem (ds:datasets object))
+      (r:log (:debug :snapshot :create-attempt) filesystem-name)
+      (let* ((recent (ds:recent-snapshot filesystem))
+             (bytes-written (ds:bytes-written filesystem))
+             (bytes-referenced (- (if recent (ds:bytes-referenced recent) 0)
+                                  (ds:bytes-referenced filesystem))))
+        (if (or (null recent)
+                (>= bytes-written minimum-size)
+                (>= bytes-referenced minimum-size))
+            (let ((name (format nil "~a@~a~a" filesystem-name ds:+prefix+ timestamp)))
+              (cmd:! (object) "zfs snap" name)
+              (ds:update-container filesystem)
+              (r:log (:info :snapshot :create-complete) name))
+            (r:log (:debug :snapshot :below-minimum-size)
+              filesystem-name
+              (format-bytes (max bytes-written bytes-referenced))
+              (format-bytes minimum-size)))))))
+
+(defmethod take-snapshots ((object list))
+  (r:log (:info :snapshot :phase-begin))
+  (dolist (source object)
+    (take-snapshots source))
+  (r:log (:info :snapshot :phase-end)))
