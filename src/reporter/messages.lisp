@@ -231,7 +231,7 @@ recent snapshot")
   "pruned ~:d snapshot~:p from filesystem '~a' on host '~(~a~)'")
 
 (define-message (:info :prune :source)
-  "pruned a total of ~:d snapshot~:p, reclaiming ~a, for source '~a'")
+  "pruned a total of ~:d snapshot~:p, reclaiming ~a, for source '~(~a~)'")
 
 (define-message (:info :prune :target)
   "pruned a total of ~:d snapshot~:p, reclaiming ~a, for source '~(~a~)' on host '~(~a~)'")
