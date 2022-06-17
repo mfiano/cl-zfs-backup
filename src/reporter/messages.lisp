@@ -212,7 +212,7 @@ recent snapshot")
 (define-message (:info :replicate :begin)
   "replicating filesystem '~a' to host '~a'")
 
-(define-message (:info :replicate :end)
+(define-message (:debug :replicate :end)
   "finished ~(~a~)~@[ ~(~a~)~] replication of filesystem '~a' to host '~a'")
 
 (define-message (:warn :replicate :cleanup-begin)
@@ -227,7 +227,7 @@ recent snapshot")
 (define-message (:info :prune :phase-end)
   "finished phase 4/4: prune")
 
-(define-message (:info :prune :filesystem)
+(define-message (:debug :prune :filesystem)
   "pruned ~:d snapshot~:p from filesystem '~a' on host '~(~a~)'")
 
 (define-message (:info :prune :source)

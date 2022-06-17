@@ -91,7 +91,7 @@
 (defmethod replicate-by-mode :after (mode destructive? (target-filesystem ds:target-filesystem))
   (let ((source-filesystem-name (ds:name (ds:source-filesystem target-filesystem)))
         (hostname (ep:hostname (ds:endpoint target-filesystem))))
-    (r:log (:info :replicate :end)
+    (r:log (:debug :replicate :end)
       mode (when destructive? :destructive) source-filesystem-name hostname)))
 
 (defmethod replicate-by-mode :before (mode

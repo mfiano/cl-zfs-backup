@@ -103,7 +103,7 @@
       (dolist (snapshot prunable-snapshots)
         (incf freed (ds:destroy snapshot))
         (incf count))
-      (r:log (:info :prune :filesystem) (length prunable-snapshots) filesystem-name hostname))
+      (r:log (:debug :prune :filesystem) (length prunable-snapshots) filesystem-name hostname))
     (values freed count)))
 
 (defmethod prune ((object ep:endpoint))
@@ -120,7 +120,7 @@
     (prune target))
   (u:mvlet ((count freed (call-next-method)))
     (when (plusp count)
-      (r:log (:info :prune :source) count (format-bytes freed) (ep:hostname object)))))
+      (r:log (:info :prune :source) count (format-bytes freed) (ep:name object)))))
 
 (defmethod prune :around ((object ep:target))
   (u:mvlet ((count freed (call-next-method))
