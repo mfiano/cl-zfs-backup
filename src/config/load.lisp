@@ -1,10 +1,8 @@
 (in-package #:cl-zfs-backup.config)
 
 (defun find-file ()
-  (let ((paths (list (namestring (uiop:merge-pathnames* "cl-zfs-backup/cl-zfs-backup.conf"
-                                                        (uiop:xdg-config-home)))
-                     (namestring (uiop:merge-pathnames* ".cl-zfs-backup.conf"
-                                                        (user-homedir-pathname))))))
+  (let ((paths (list (namestring (uiop:merge-pathnames* "clzb/clzb.conf" (uiop:xdg-config-home)))
+                     (namestring (uiop:merge-pathnames* ".clzb.conf" (user-homedir-pathname))))))
     (values (find-if #'uiop:file-exists-p paths)
             paths)))
 

@@ -13,7 +13,7 @@
 
 (u:eval-always
   (defun get-log-path ()
-    (let ((path (uiop:merge-pathnames* "cl-zfs-backup/cl-zfs-backup.log" (uiop:xdg-data-home))))
+    (let ((path (uiop:merge-pathnames* "clzb/clzb.log" (uiop:xdg-data-home))))
       (ensure-directories-exist path)
       (namestring path))))
 

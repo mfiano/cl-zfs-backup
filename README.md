@@ -14,7 +14,7 @@ build.sh script in the root of the project for automating the build process.
 
 ## TODO
 
-Documentation, and more documentation. For now, see the included sample.conf file in the project root.
+Documentation, and more documentation. For now, see the included clzb.conf file in the project root.
 
 ## License
 

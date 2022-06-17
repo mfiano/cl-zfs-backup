@@ -13,7 +13,7 @@
 
 (defmethod cmd:run :around ((object remote-target) output (command list))
   (let ((prefix (cmd:make-remote-prefix (user object) (port object) (address object))))
-    (call-next-method object output (nconc prefix (cons "\"" (append command (list "\"")))))))
+    (call-next-method object output (nconc prefix command))))
 
 (defun connectable? (endpoint)
   (let ((connectable? (cmd:? (endpoint) "exit")))
